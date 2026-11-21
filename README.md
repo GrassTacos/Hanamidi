@@ -26,3 +26,10 @@ Basic Usage
 2. Pick a Separation model (e.g., 6-stem mode) and check the stems you want to transcribe.
 3. Fine-tune the Note detection sliders and Timing settings if needed, or stick with the defaults.
 4. Click Convert to process the track, then click Open MIDI folder to grab your files.
+
+Setup:
+1. Download the latest Hanamidi version.
+2. Extract Hanamidi to where ever your heart desires.
+3. Run setup.bat first.
+4. The setup.bat can take some time to download all dependencies, so be patient.
+5. Enjoy Hanamidi.
