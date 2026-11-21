@@ -8,12 +8,13 @@ your MIDI is ready.
 
 First time: double-click setup.bat (same folder) to install everything.
 Then open this file. Keep it anywhere - all output (MIDI, stems, downloaded
-models) goes into a 'SongOutput' folder created next to it.
+models, settings) goes into a 'SongOutput' folder created next to it.
 """
 
 import base64
 import importlib
 import importlib.util
+import json
 import math
 import os
 import queue
@@ -39,31 +40,86 @@ BASE_DIR = Path(sys.argv[0]).resolve().parent if getattr(sys, "frozen", False) \
     else Path(__file__).resolve().parent
 DEFAULT_OUT = BASE_DIR / "SongOutput"
 MODELS_DIR = DEFAULT_OUT / "_models"      # model cache stays here too
+SETTINGS_FILE = DEFAULT_OUT / "_settings.json"
 REQUIRED = {"demucs": "demucs", "basic_pitch": "basic-pitch", "pretty_midi": "pretty_midi",
             "pkg_resources": "setuptools<81", "librosa": "librosa"}  # newer setuptools dropped pkg_resources
 
 ALL_STEMS = ["vocals", "drums", "bass", "guitar", "piano", "other"]
 
-# Palette (the pink is taken from the sakura icon)
-BG = "#0f0c14"
-PANEL = "#17121f"
-FIELD = "#211a2b"
-LINE = "#33293f"
-TEXT = "#f4eff8"
-MUTED = "#8f859d"
-PINK = "#f4a6a6"
-PINK_HI = "#f9bcbc"
-PINK_DK = "#d98787"
-ON_PINK = "#2b1519"
-WARN = "#ff9b9b"
-FONT = "Segoe UI"
-FONT_B = "Segoe UI Semibold"
+MONO = "Consolas"
+SANS = "Segoe UI"
+SANS_B = "Segoe UI Semibold"
+LIGHT = "Segoe UI Light"
 
 SCALE = 1.0
 
 
 def px(n):
     return int(round(n * SCALE))
+
+
+# ---------------------------------------------------------------- colour + themes
+def _rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def mix(a, b, t):
+    ra, rb = _rgb(a), _rgb(b)
+    return "#%02x%02x%02x" % tuple(int(round(x + (y - x) * t)) for x, y in zip(ra, rb))
+
+
+THEMES = {
+    "Mono": dict(bg="#000000", panel="#0a0a0a", field="#101010", line="#2b2b2b", text="#f0f0f0",
+                 muted="#8a8a8a", accent="#f0f0f0", on_accent="#000000", warn="#ff6b6b", flower="line"),
+    "Paper": dict(bg="#ecebe6", panel="#f6f5f1", field="#ffffff", line="#c4c2ba", text="#111111",
+                  muted="#6b6963", accent="#111111", on_accent="#f6f5f1", warn="#b3261e", flower="line"),
+    "Sakura": dict(bg="#0f0c14", panel="#17121f", field="#211a2b", line="#33293f", text="#f4eff8",
+                   muted="#8f859d", accent="#f4a6a6", on_accent="#2b1519", warn="#ff9b9b", flower="color"),
+    "Terminal": dict(bg="#020a04", panel="#06130a", field="#0a1c0f", line="#17442a", text="#8dffa8",
+                     muted="#3f9b5b", accent="#8dffa8", on_accent="#020a04", warn="#ffb86b", flower="line"),
+    "Amber": dict(bg="#0b0805", panel="#120d07", field="#1a130a", line="#4a3510", text="#ffb43a",
+                  muted="#9a6f20", accent="#ffb43a", on_accent="#0b0805", warn="#ff7a59", flower="line"),
+    "Blueprint": dict(bg="#0a1a33", panel="#0d2140", field="#10284d", line="#2b4a7d", text="#d6e6ff",
+                      muted="#7f9cc8", accent="#d6e6ff", on_accent="#0a1a33", warn="#ffb3a1", flower="line"),
+}
+THEME_ORDER = list(THEMES)
+
+CURRENT_THEME = "Mono"
+CURRENT_FLOWERS = "line"
+BG = PANEL = FIELD = LINE = TEXT = MUTED = ACCENT = ACCENT_HI = ON_ACCENT = WARN = INK = "#000000"
+
+
+def apply_theme(name, flowers=None):
+    """Set the module-level palette. Widgets read these names every time they draw."""
+    global CURRENT_THEME, CURRENT_FLOWERS
+    global BG, PANEL, FIELD, LINE, TEXT, MUTED, ACCENT, ACCENT_HI, ON_ACCENT, WARN, INK
+    t = THEMES.get(name) or THEMES["Mono"]
+    CURRENT_THEME = name if name in THEMES else "Mono"
+    CURRENT_FLOWERS = flowers if flowers in ("line", "color") else t["flower"]
+    BG, PANEL, FIELD, LINE = t["bg"], t["panel"], t["field"], t["line"]
+    TEXT, MUTED, ACCENT, ON_ACCENT, WARN = t["text"], t["muted"], t["accent"], t["on_accent"], t["warn"]
+    ACCENT_HI = mix(t["accent"], t["bg"], 0.16)
+    INK = t["text"]
+
+
+def load_settings():
+    try:
+        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return d.get("theme", "Mono"), d.get("flowers")
+    except Exception:  # noqa: BLE001
+        return "Mono", None
+
+
+def save_settings(theme, flowers):
+    try:
+        DEFAULT_OUT.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps({"theme": theme, "flowers": flowers}), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+apply_theme("Mono")
 
 
 # ---------------------------------------------------------------- icon
@@ -387,113 +443,6 @@ ICON_PNGS = {
         "h//v8dP79t/TObaf+TbRrih4Yu9eh594wkmhYjXeZsTMlFY0HNu71zlSLNqdY7pkWudOGb4IktfZ55K7dn5mmZCk+egiCgHx"
         "5fNQL+32/wBzs81puSm/MAAAAABJRU5ErkJggg=="
     ),
-    72: (
-        "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"
-        "/D/SwsyK7Ab64QAAAABJRU5ErkJggg=="
-    ),
-    48: (
-        "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"
-        "tKLbWqu9/g9DGQtZjEza6QAAAABJRU5ErkJggg=="
-    ),
 }
 
 
@@ -757,16 +706,6 @@ class Cancelled(Exception):
 # ======================================================================
 # Bloom animation
 # ======================================================================
-def _rgb(h):
-    h = h.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def mix(a, b, t):
-    ra, rb = _rgb(a), _rgb(b)
-    return "#%02x%02x%02x" % tuple(int(round(x + (y - x) * t)) for x, y in zip(ra, rb))
-
-
 def clamp01(x):
     return 0.0 if x < 0 else 1.0 if x > 1 else x
 
@@ -785,17 +724,6 @@ def bez(p0, p1, p2, t):
     u = 1 - t
     return (u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
             u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1])
-
-
-def bez_tan(p0, p1, p2, t):
-    return (2 * (1 - t) * (p1[0] - p0[0]) + 2 * t * (p2[0] - p1[0]),
-            2 * (1 - t) * (p1[1] - p0[1]) + 2 * t * (p2[1] - p1[1]))
-
-
-def rrect(cv, x1, y1, x2, y2, r, **kw):
-    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
-           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-    return cv.create_polygon(pts, smooth=True, **kw)
 
 
 # petal outlines: x = side (-1..1), y = along the petal (0 base .. 1 tip)
@@ -853,6 +781,10 @@ def petal_points(shape, cx, cy, ang, length, half_w):
     return pts
 
 
+def _lw():
+    return max(1, px(1))
+
+
 class Stage:
     """Draws the growing flower. Progress 0..1 = stem grows, then the bloom opens."""
 
@@ -876,9 +808,13 @@ class Stage:
     def active(self):
         return self.mode in ("running", "done") or bool(self.parts)
 
+    def adopt(self, other):
+        for k in ("idx", "disp", "target", "mode", "t", "last", "parts", "burst"):
+            setattr(self, k, getattr(other, k))
+        self.dirty = True
+
     def new_flower(self):
-        choices = [i for i in range(len(FLOWERS)) if i != self.idx]
-        self.idx = random.choice(choices)
+        self.idx = random.choice([i for i in range(len(FLOWERS)) if i != self.idx])
 
     def start(self):
         self.new_flower()
@@ -894,6 +830,12 @@ class Stage:
 
     def stop(self):
         self.mode = "stopped"
+        self.dirty = True
+
+    def reset(self):
+        self.mode = "idle"
+        self.disp = self.target = 0.0
+        self.parts, self.burst = [], None
         self.dirty = True
 
     # ------------------------------------------------------------ update
@@ -914,8 +856,8 @@ class Stage:
             self.disp = 1.0
             if self.burst is None:
                 self.burst = self.t
-                self._spawn(34, burst=True)
-            elif self.t - self.burst < 7 and random.random() < dt * 4:
+                self._spawn(30, burst=True)
+            elif self.t - self.burst < 7 and random.random() < dt * 3:
                 self._spawn(1, burst=False)
         for p in self.parts:
             p["x"] += p["vx"] * dt
@@ -928,7 +870,7 @@ class Stage:
 
     def _geometry(self):
         w, h = max(self.cv.winfo_width(), 50), max(self.cv.winfo_height(), 50)
-        gy = h - px(118)
+        gy = h - px(104)
         hs = gy * 0.52
         R = min(w * 0.27, gy * 0.20) * self.spec["scale"]
         return w, h, w / 2.0, gy, hs, R
@@ -946,143 +888,201 @@ class Stage:
                 vx=math.cos(a) * sp, vy=math.sin(a) * sp - (px(70) if burst else 0),
                 a=random.uniform(0, 6.28), va=random.uniform(-3, 3),
                 size=random.uniform(0.10, 0.17) * R, color=random.choice(cols),
-                life=random.uniform(3.0, 5.0) if burst else random.uniform(3.5, 5.5),
-                max=5.5))
+                life=random.uniform(3.0, 5.0) if burst else random.uniform(3.5, 5.5)))
 
     # -------------------------------------------------------------- draw
     def draw(self):
         cv = self.cv
         w, h, cx, gy, Hs, R = self._geometry()
-        spec = self.spec
         d = self.disp
         s = ease(d / 0.34)                       # stem growth
         b = clamp01((d - 0.22) / 0.78)           # bloom
-        head_s = ease((d - 0.08) / 0.2)          # bud appears
-        sway = math.sin(self.t * 1.3) * 0.6 + math.sin(self.t * 0.7 + 1.0) * 0.4
-        sway *= 1.0 if self.mode in ("running", "done") else 0.0
+        live = self.mode in ("running", "done")
+        sway = (math.sin(self.t * 1.3) * 0.6 + math.sin(self.t * 0.7 + 1.0) * 0.4) if live else 0.0
+        hx, hy = cx + sway * px(7) * s, gy - Hs * s
+        c = dict(w=w, h=h, cx=cx, gy=gy, R=R, d=d, s=s, b=b, head_s=ease((d - 0.08) / 0.2),
+                 hx=hx, hy=hy, p0=(cx, gy), p1=(cx - sway * px(10) * s, (gy + hy) / 2), p2=(hx, hy))
 
         cv.delete("all")
-        rrect(cv, 2, 2, w - 2, h - 2, px(22), fill=PANEL, outline=LINE)
+        cv.create_rectangle(0, 0, w - 1, h - 1, fill=PANEL, outline=LINE, width=1)
+        self._marks(w, h)
+        line = CURRENT_FLOWERS == "line"
+        if line:
+            self._ground_line(c)
+        else:
+            self._ground_color(c)
+        self._stem(c, line)
+        if c["head_s"] > 0.01:
+            self._head(c, line)
+        if line and self.mode == "done" and d >= 1:
+            rr = R * (1.22 + 0.03 * math.sin(self.t * 2.0))
+            cv.create_oval(hx - rr, hy - rr, hx + rr, hy + rr, outline=MUTED, dash=(2, 6), width=1)
+        for p in self.parts:
+            fade = clamp01(p["life"] / 1.2)
+            pts = petal_points("round", p["x"], p["y"], p["a"], p["size"] * 2.0, p["size"])
+            if line:
+                cv.create_polygon(pts, smooth=True, fill=PANEL, outline=mix(PANEL, INK, fade), width=1)
+            else:
+                cv.create_polygon(pts, smooth=True, fill=mix(PANEL, p["color"], fade), outline="")
+        self._text(w, h, d)
+        self.dirty = False
 
-        hx = cx + sway * px(7) * s
-        hy = gy - Hs * s
+    def _marks(self, w, h):
+        col = mix(PANEL, TEXT, 0.35)
+        m, L = px(10), px(10)
+        for x, sx in ((m, 1), (w - 1 - m, -1)):
+            for y, sy in ((m, 1), (h - 1 - m, -1)):
+                self.cv.create_line(x, y + sy * L, x, y, x + sx * L, y, fill=col, width=1)
 
-        # soft glow behind the flower
-        base = spec["layers"][0]["color"]
-        pulse = 1.0 + (0.25 * math.sin(self.t * 2.0) if self.mode == "done" and d >= 1 else 0.0)
-        g = ease(b)
+    def _text(self, w, h, d):
+        cv, spec = self.cv, self.spec
+        mode = self.mode
+        if mode == "idle":
+            top, pct, word, sub = "--  STANDBY", "---", "IDLE", "Choose a song."
+        else:
+            top = "%02d  %s" % (self.idx + 1, spec["name"].upper())
+            pct = "%03d%%" % (100 if mode == "done" else int(round(min(d, 0.99) * 100)))
+            word = {"running": "GROWING", "done": "IN BLOOM", "stopped": "STOPPED"}[mode]
+            sub = {"running": "Working on your song.", "done": "Complete. MIDI is ready.",
+                   "stopped": "Stopped before finishing."}[mode]
+        cv.create_text(px(20), px(22), text=top, anchor="w", fill=MUTED, font=(MONO, 9))
+        cv.create_text(w - px(20), px(22), text=APP_NAME.upper(), anchor="e", fill=MUTED, font=(MONO, 9))
+        cv.create_line(px(20), h - px(88), w - px(20), h - px(88), fill=LINE, width=1)
+        cv.create_text(px(20), h - px(56), text=pct, anchor="w", fill=TEXT, font=(MONO, 30, "bold"))
+        cv.create_text(w - px(20), h - px(62), text=word, anchor="e", fill=TEXT, font=(MONO, 10, "bold"))
+        cv.create_text(px(20), h - px(22), text=sub, anchor="w", fill=MUTED, font=(MONO, 9))
+
+    # ---------------------------------------------------------- scenery
+    def _ground_line(self, c):
+        cv, cx, gy = self.cv, c["cx"], c["gy"]
+        hatch = mix(PANEL, INK, 0.45)
+        cv.create_line(cx - px(120), gy, cx + px(120), gy, fill=INK, width=_lw())
+        for k in range(-5, 6):
+            x = cx + k * px(20)
+            cv.create_line(x, gy + px(2), x - px(6), gy + px(9), fill=hatch, width=1)
+        if c["d"] < 0.05:
+            r = px(4) * (1.0 + 0.12 * math.sin(self.t * 3.0))
+            cv.create_oval(cx - r, gy - 2 * r, cx + r, gy, outline=INK, fill=PANEL, width=_lw())
+
+    def _ground_color(self, c):
+        cv, cx, gy, hx, hy, R = self.cv, c["cx"], c["gy"], c["hx"], c["hy"], c["R"]
+        base = self.spec["layers"][0]["color"]
+        pulse = 1.0 + (0.25 * math.sin(self.t * 2.0) if self.mode == "done" and c["d"] >= 1 else 0.0)
+        g = ease(c["b"])
         for i in range(12):                       # many faint rings = a smooth glow
             f = i / 11.0
-            rr = R * (2.2 - 1.2 * f) * (0.5 + 0.5 * g)
-            col = mix(PANEL, base, (0.02 + 0.15 * f * f) * g * pulse)
-            cv.create_oval(hx - rr, hy - rr, hx + rr, hy + rr, fill=col, outline="")
-
-        # ground
-        cv.create_oval(cx - px(86), gy - px(12), cx + px(86), gy + px(18), fill="#241b2e", outline="")
-        cv.create_oval(cx - px(60), gy - px(14), cx + px(60), gy + px(6), fill="#2d2338", outline="")
-        for gx, gh in ((-52, 14), (-38, 9), (40, 11), (54, 15), (30, 8)):
-            cv.create_line(cx + px(gx), gy + px(1), cx + px(gx) - px(2), gy - px(gh),
-                           fill=GREEN_DK, width=px(2), capstyle="round")
-
-        if d < 0.05:                              # a seed waiting in the soil
+            rr = min(R * (2.2 - 1.2 * f) * (0.5 + 0.5 * g), c["w"] / 2.0 - px(6))
+            cv.create_oval(hx - rr, hy - rr, hx + rr, hy + rr,
+                           fill=mix(PANEL, base, (0.02 + 0.15 * f * f) * g * pulse), outline="")
+        cv.create_oval(cx - px(86), gy - px(12), cx + px(86), gy + px(18), fill=mix(PANEL, TEXT, .08), outline="")
+        cv.create_oval(cx - px(60), gy - px(14), cx + px(60), gy + px(6), fill=mix(PANEL, TEXT, .14), outline="")
+        if c["d"] < 0.05:
             r = px(5) * (1.0 + 0.12 * math.sin(self.t * 3.0))
             cv.create_oval(cx - r, gy - r * 0.8, cx + r, gy + r * 0.8, fill=mix(base, "#8a6a50", .5), outline="")
 
-        # stem
-        p0, p2 = (cx, gy), (hx, hy)
-        p1 = (cx - sway * px(10) * s, (gy + hy) / 2)
-        if s > 0.01:
-            cv.create_line(p0[0], p0[1], p1[0], p1[1], p2[0], p2[1], smooth=True,
-                           fill=GREEN, width=px(5), capstyle="round")
-            leaf_p = ease((s - 0.30) / 0.6)
-            if leaf_p > 0.02:
-                for t_pos, side in ((0.34, -1), (0.58, 1)):
-                    lx, ly = bez(p0, p1, p2, t_pos)
-                    ang = side * math.radians(62)
-                    size = px(54) * leaf_p * (1.0 if t_pos < 0.5 else 0.85)
-                    pts = []
-                    for x, y in LEAF:
-                        pts += [lx + math.sin(ang) * y * size + math.cos(ang) * x * size * 0.55,
-                                ly - math.cos(ang) * y * size + math.sin(ang) * x * size * 0.55]
-                    cv.create_polygon(pts, smooth=True, fill=GREEN, outline="")
-                    cv.create_line(lx, ly, lx + math.sin(ang) * size * .85, ly - math.cos(ang) * size * .85,
-                                   fill=mix(GREEN, "#ffffff", .25), width=max(1, px(1)))
+    def _stem(self, c, line):
+        cv, s = self.cv, c["s"]
+        if s <= 0.01:
+            return
+        p0, p1, p2 = c["p0"], c["p1"], c["p2"]
+        cv.create_line(p0[0], p0[1], p1[0], p1[1], p2[0], p2[1], smooth=True,
+                       fill=INK if line else GREEN, width=px(2) if line else px(5), capstyle="round")
+        leaf_p = ease((s - 0.30) / 0.6)
+        if leaf_p <= 0.02:
+            return
+        for t_pos, side in ((0.34, -1), (0.58, 1)):
+            lx, ly = bez(p0, p1, p2, t_pos)
+            ang = side * math.radians(62)
+            size = px(54) * leaf_p * (1.0 if t_pos < 0.5 else 0.85)
+            pts = []
+            for x, y in LEAF:
+                pts += [lx + math.sin(ang) * y * size + math.cos(ang) * x * size * 0.55,
+                        ly - math.cos(ang) * y * size + math.sin(ang) * x * size * 0.55]
+            if line:
+                cv.create_polygon(pts, smooth=True, fill=PANEL, outline=INK, width=_lw())
+                rib = mix(PANEL, INK, .5)
+            else:
+                cv.create_polygon(pts, smooth=True, fill=GREEN, outline="")
+                rib = mix(GREEN, "#ffffff", .25)
+            cv.create_line(lx, ly, lx + math.sin(ang) * size * .85, ly - math.cos(ang) * size * .85,
+                           fill=rib, width=1)
 
-        # flower head
-        if head_s > 0.01:
-            Re = R * head_s
-            cal = (0.5 + 0.5 * b)
-            cv.create_oval(hx - Re * 0.26 * cal, hy - Re * 0.02, hx + Re * 0.26 * cal, hy + Re * 0.30 * cal,
-                           fill=GREEN_DK, outline="")
-            oe = ease(b)
-            for layer in spec["layers"]:
-                lag = layer.get("lag", 0.0)
-                lb = clamp01((b - lag) / (1 - lag))
-                le, lo = ease_out(lb), ease(lb)
-                length = Re * layer["L"] * (0.30 + 0.70 * le)
-                hw = Re * layer["w"] * (0.55 + 0.45 * le)
-                n, off = layer["n"], layer.get("off", 0.0)
-                for i in range(n):
-                    ang = (off + (i - (n - 1) / 2.0) * 2 * math.pi / n) * lo
-                    cv.create_polygon(petal_points(layer["shape"], hx, hy, ang, length, hw),
-                                      smooth=True, fill=layer["color"], outline="")
+    def _head(self, c, line):
+        cv, spec = self.cv, self.spec
+        hx, hy, b = c["hx"], c["hy"], c["b"]
+        Re = c["R"] * c["head_s"]
+        cal = 0.5 + 0.5 * b
+        cv.create_oval(hx - Re * 0.26 * cal, hy - Re * 0.02, hx + Re * 0.26 * cal, hy + Re * 0.30 * cal,
+                       fill=PANEL if line else GREEN_DK, outline=INK if line else "", width=_lw())
+        for li, layer in enumerate(spec["layers"]):
+            lag = layer.get("lag", 0.0)
+            lb = clamp01((b - lag) / (1 - lag))
+            le, lo = ease_out(lb), ease(lb)
+            length = Re * layer["L"] * (0.30 + 0.70 * le)
+            hw = Re * layer["w"] * (0.55 + 0.45 * le)
+            n, off = layer["n"], layer.get("off", 0.0)
+            for i in range(n):
+                ang = (off + (i - (n - 1) / 2.0) * 2 * math.pi / n) * lo
+                pts = petal_points(layer["shape"], hx, hy, ang, length, hw)
+                if line:
+                    cv.create_polygon(pts, smooth=True, fill=mix(PANEL, INK, 0.05 + 0.09 * li),
+                                      outline=INK, width=_lw())
+                    cv.create_line(hx, hy, hx + math.sin(ang) * length * .62, hy - math.cos(ang) * length * .62,
+                                   fill=mix(PANEL, INK, .5), width=1)
+                else:
+                    cv.create_polygon(pts, smooth=True, fill=layer["color"], outline="")
                     cv.create_polygon(petal_points(layer["shape"], hx, hy, ang, length * 0.72, hw * 0.40),
                                       smooth=True, fill=mix(layer["color"], "#ffffff", 0.22), outline="")
-            self._center(hx, hy, Re, b)
+        self._center(c, Re, line)
 
-        # falling petals / sparkles
-        for p in self.parts:
-            fade = clamp01(p["life"] / 1.2)
-            col = mix(PANEL, p["color"], fade)
-            cv.create_polygon(petal_points("round", p["x"], p["y"], p["a"], p["size"] * 2.0, p["size"]),
-                              smooth=True, fill=col, outline="")
-
-        # text
-        if self.mode == "idle":
-            title, sub = "Waiting for a song", "Your flower grows as it converts."
-        elif self.mode == "running":
-            title, sub = spec["name"], "%d%% bloomed" % int(round(min(d, 0.99) * 100))
-        elif self.mode == "done":
-            title, sub = spec["name"], "In full bloom - your MIDI is ready."
-        else:
-            title, sub = spec["name"], "Stopped."
-        cv.create_text(w / 2, h - px(72), text=title, fill=TEXT, font=(FONT_B, 15))
-        cv.create_text(w / 2, h - px(44), text=sub, fill=MUTED, font=(FONT, 10))
-        self.dirty = False
-
-    def _center(self, hx, hy, Re, b):
-        cv, c = self.cv, self.spec["center"]
+    def _center(self, c, Re, line):
+        cv, spec = self.cv, self.spec["center"]
+        hx, hy, b = c["hx"], c["hy"], c["b"]
         grow = 0.4 + 0.6 * ease_out(clamp01((b - 0.15) / 0.85))
-        cr = Re * c["r"] * grow
-        kind = c["kind"]
+        cr = Re * spec["r"] * grow
+        kind = spec["kind"]
+        main = INK if line else spec["color"]
+        dot = PANEL if line else spec["dot"]
         if kind == "stamens":
             for j in range(5):
                 a = j * 2 * math.pi / 5
-                x0, y0 = hx + math.sin(a) * Re * 0.05, hy - math.cos(a) * Re * 0.05
-                x1, y1 = hx + math.sin(a) * cr * 1.15 * 1.0, hy - math.cos(a) * cr * 1.15
-                cv.create_line(x0, y0, x1, y1, fill=c["color"], width=max(2, px(4)), capstyle="round")
+                x1, y1 = hx + math.sin(a) * cr * 1.15, hy - math.cos(a) * cr * 1.15
+                cv.create_line(hx + math.sin(a) * Re * 0.05, hy - math.cos(a) * Re * 0.05, x1, y1,
+                               fill=main, width=max(2, px(3) if line else px(4)), capstyle="round")
                 cv.create_oval(x1 - Re * .045, y1 - Re * .045, x1 + Re * .045, y1 + Re * .045,
-                               fill=c["dot"], outline="")
+                               fill=INK if line else spec["dot"], outline="")
             return
-        cv.create_oval(hx - cr, hy - cr, hx + cr, hy + cr, fill=c["color"], outline="")
+        if kind == "disc" and line:
+            cv.create_oval(hx - cr, hy - cr, hx + cr, hy + cr, fill=PANEL, outline=INK, width=_lw())
+            hr = cr * 0.45
+            cv.create_oval(hx - hr, hy - hr, hx + hr, hy + hr, fill=INK, outline="")
+            return
+        cv.create_oval(hx - cr, hy - cr, hx + cr, hy + cr, fill=main, outline="")
         if kind == "seeds" and cr > px(6):
             dr = max(1.0, cr * 0.06)
             for k in range(1, 46):
                 r = cr * 0.9 * math.sqrt(k / 46.0)
                 th = k * 2.399963
                 x, y = hx + math.cos(th) * r, hy + math.sin(th) * r
-                cv.create_oval(x - dr, y - dr, x + dr, y + dr, fill=c["dot"], outline="")
+                cv.create_oval(x - dr, y - dr, x + dr, y + dr, fill=dot, outline="")
         elif kind == "disc":
             hr = cr * 0.45
-            cv.create_oval(hx - hr, hy - hr, hx + hr, hy + hr, fill=c["dot"], outline="")
+            cv.create_oval(hx - hr, hy - hr, hx + hr, hy + hr, fill=spec["dot"], outline="")
 
 
 # ======================================================================
-# Custom widgets (flat, rounded, dark)
+# Widgets: flat, square, 1px lines. Colours are read at draw time so a
+# theme change only needs the window to be rebuilt.
 # ======================================================================
+def _bind_var(widget, var):
+    """Redraw when a variable changes; detach when the widget goes away."""
+    tid = var.trace_add("write", lambda *a: widget.redraw() if widget.winfo_exists() else None)
+    widget.bind("<Destroy>", lambda e: var.trace_remove("write", tid), add="+")
+
+
 class Btn(tk.Canvas):
-    def __init__(self, parent, text, command, kind="primary", height=46, width=100, bg=BG):
-        super().__init__(parent, height=px(height), width=px(width), bg=bg,
+    def __init__(self, parent, text, command, kind="primary", height=46, width=100):
+        super().__init__(parent, height=px(height), width=px(width), bg=BG,
                          highlightthickness=0, bd=0, cursor="hand2")
         self.text, self.command, self.kind = text, command, kind
         self.enabled, self.hover, self.down = True, False, False
@@ -1117,30 +1117,29 @@ class Btn(tk.Canvas):
         w, h = self.winfo_width(), self.winfo_height()
         if w < 4:
             return
-        r = min(px(14), h // 2)
         if self.kind == "primary":
             if not self.enabled:
-                fill, fg, outline = "#2a2231", "#6f647c", ""
+                fill, fg, outline = FIELD, MUTED, LINE
             else:
-                fill = PINK_DK if self.down else PINK_HI if self.hover else PINK
-                fg, outline = ON_PINK, ""
+                fill = mix(ACCENT, BG, 0.35) if self.down else ACCENT_HI if self.hover else ACCENT
+                fg, outline = ON_ACCENT, ACCENT
         else:
             fill = FIELD if (self.hover and self.enabled) else BG
-            fg = TEXT if self.enabled else "#5f566b"
-            outline = PINK if (self.hover and self.enabled) else LINE
-        rrect(self, 1, 1, w - 1, h - 1, r, fill=fill, outline=outline)
-        self.create_text(w / 2, h / 2, text=self.text, fill=fg,
-                         font=(FONT_B, 11 if self.kind == "primary" else 10))
+            fg = TEXT if self.enabled else MUTED
+            outline = TEXT if (self.hover and self.enabled) else LINE
+        self.create_rectangle(0, 0, w - 1, h - 1, fill=fill, outline=outline, width=1)
+        self.create_text(w / 2, h / 2, text=self.text.upper(), fill=fg,
+                         font=(MONO, 11 if self.kind == "primary" else 9, "bold"))
 
 
 class Chip(tk.Canvas):
-    """Pill toggle. With value=None it toggles a BooleanVar, otherwise it selects `value`."""
+    """Square toggle. With value=None it flips a BooleanVar, otherwise it selects `value`."""
 
-    def __init__(self, parent, text, var, value=None, height=38, bg=BG):
-        super().__init__(parent, height=px(height), width=px(40), bg=bg,
+    def __init__(self, parent, text, var, value=None, height=36):
+        super().__init__(parent, height=px(height), width=px(40), bg=BG,
                          highlightthickness=0, bd=0, cursor="hand2")
         self.text, self.var, self.value, self.hover = text, var, value, False
-        var.trace_add("write", lambda *a: self.redraw())
+        _bind_var(self, var)
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Enter>", lambda e: self._hov(True))
         self.bind("<Leave>", lambda e: self._hov(False))
@@ -1165,21 +1164,19 @@ class Chip(tk.Canvas):
         if w < 4:
             return
         on = self.selected()
-        if on:
-            fill, fg, outline = PINK, ON_PINK, ""
-        else:
-            fill, fg = FIELD, TEXT
-            outline = PINK if self.hover else LINE
-        rrect(self, 1, 1, w - 1, h - 1, h // 2, fill=fill, outline=outline)
-        self.create_text(w / 2, h / 2, text=self.text, fill=fg, font=(FONT_B, 10))
+        fill = ACCENT if on else BG
+        fg = ON_ACCENT if on else TEXT
+        outline = ACCENT if on else (TEXT if self.hover else LINE)
+        self.create_rectangle(0, 0, w - 1, h - 1, fill=fill, outline=outline, width=1)
+        self.create_text(w / 2, h / 2, text=self.text.upper(), fill=fg, font=(MONO, 9, "bold"))
 
 
 class Switch(tk.Canvas):
-    def __init__(self, parent, text, var, bg=BG):
-        super().__init__(parent, height=px(30), width=px(200), bg=bg,
+    def __init__(self, parent, text, var):
+        super().__init__(parent, height=px(28), width=px(200), bg=BG,
                          highlightthickness=0, bd=0, cursor="hand2")
         self.text, self.var = text, var
-        var.trace_add("write", lambda *a: self.redraw())
+        _bind_var(self, var)
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<ButtonRelease-1>", lambda e: var.set(not var.get()))
 
@@ -1188,28 +1185,27 @@ class Switch(tk.Canvas):
         w, h = self.winfo_width(), self.winfo_height()
         if w < 4:
             return
-        on = bool(self.var.get())
-        tw, th = px(38), px(20)
-        y0 = (h - th) / 2
-        rrect(self, 1, y0, tw, y0 + th, th // 2, fill=PINK if on else LINE, outline="")
-        kr = th / 2 - px(3)
-        kx = tw - th / 2 if on else th / 2 + 1
-        self.create_oval(kx - kr, h / 2 - kr, kx + kr, h / 2 + kr, fill=ON_PINK if on else MUTED, outline="")
-        self.create_text(tw + px(12), h / 2, text=self.text, fill=TEXT, font=(FONT, 10), anchor="w")
+        s = px(14)
+        y0 = (h - s) / 2
+        self.create_rectangle(1, y0, 1 + s, y0 + s, fill=BG, outline=TEXT, width=1)
+        if self.var.get():
+            i = px(3)
+            self.create_rectangle(1 + i, y0 + i, 1 + s - i, y0 + s - i, fill=ACCENT, outline="")
+        self.create_text(s + px(14), h / 2, text=self.text, fill=TEXT, font=(SANS, 10), anchor="w")
 
 
 class Slider(tk.Canvas):
-    def __init__(self, parent, var, lo, hi, step, fmt=str, bg=BG):
-        super().__init__(parent, height=px(28), width=px(200), bg=bg,
+    def __init__(self, parent, var, lo, hi, step, fmt=str):
+        super().__init__(parent, height=px(26), width=px(200), bg=BG,
                          highlightthickness=0, bd=0, cursor="hand2")
         self.var, self.lo, self.hi, self.step, self.fmt = var, lo, hi, step, fmt
-        var.trace_add("write", lambda *a: self.redraw())
+        _bind_var(self, var)
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<ButtonPress-1>", self._drag)
         self.bind("<B1-Motion>", self._drag)
 
     def _track(self):
-        return px(8), self.winfo_width() - px(58)
+        return px(6), self.winfo_width() - px(62)
 
     def _drag(self, e):
         x0, x1 = self._track()
@@ -1226,19 +1222,16 @@ class Slider(tk.Canvas):
         x0, x1 = self._track()
         pos = clamp01((float(self.var.get()) - self.lo) / (self.hi - self.lo))
         xk = x0 + pos * (x1 - x0)
-        th = px(6)
-        rrect(self, x0, h / 2 - th / 2, x1, h / 2 + th / 2, th // 2, fill=LINE, outline="")
-        if xk > x0 + 2:
-            rrect(self, x0, h / 2 - th / 2, xk, h / 2 + th / 2, th // 2, fill=PINK, outline="")
-        kr = px(9)
-        self.create_oval(xk - kr, h / 2 - kr, xk + kr, h / 2 + kr, fill=TEXT, outline=PINK, width=px(2))
-        self.create_text(w - px(4), h / 2, text=self.fmt(self.var.get()), fill=MUTED,
-                         font=(FONT, 10), anchor="e")
+        self.create_line(x0, h / 2, x1, h / 2, fill=LINE, width=1)
+        self.create_line(x0, h / 2, xk, h / 2, fill=ACCENT, width=px(2))
+        kw, kh = px(5), px(8)
+        self.create_rectangle(xk - kw, h / 2 - kh, xk + kw, h / 2 + kh, fill=ACCENT, outline=BG, width=1)
+        self.create_text(w - 1, h / 2, text=self.fmt(self.var.get()), fill=MUTED, font=(MONO, 9), anchor="e")
 
 
 class Prog(tk.Canvas):
-    def __init__(self, parent, bg=BG):
-        super().__init__(parent, height=px(6), width=px(100), bg=bg, highlightthickness=0, bd=0)
+    def __init__(self, parent):
+        super().__init__(parent, height=px(3), width=px(100), bg=BG, highlightthickness=0, bd=0)
         self.v = 0.0
         self.bind("<Configure>", lambda e: self.redraw())
 
@@ -1252,19 +1245,19 @@ class Prog(tk.Canvas):
         w, h = self.winfo_width(), self.winfo_height()
         if w < 4:
             return
-        rrect(self, 0, 0, w, h, h // 2, fill=LINE, outline="")
-        if self.v > 0.005:
-            rrect(self, 0, 0, max(h, w * self.v), h, h // 2, fill=PINK, outline="")
+        self.create_rectangle(0, 0, w, h, fill=LINE, outline="")
+        if self.v > 0.002:
+            self.create_rectangle(0, 0, w * min(1.0, self.v), h, fill=ACCENT, outline="")
 
 
 class Picker(tk.Canvas):
-    """Big click target showing the chosen song."""
+    """Click target showing the chosen song."""
 
-    def __init__(self, parent, command, bg=BG):
-        super().__init__(parent, height=px(78), width=px(200), bg=bg,
+    def __init__(self, parent, command):
+        super().__init__(parent, height=px(76), width=px(200), bg=BG,
                          highlightthickness=0, bd=0, cursor="hand2")
         self.command, self.hover = command, False
-        self.title, self.sub = "Choose a song", "mp3, wav, flac, m4a"
+        self.title, self.sub = "Choose a song", ""
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<Enter>", lambda e: self._hov(True))
         self.bind("<Leave>", lambda e: self._hov(False))
@@ -1283,27 +1276,53 @@ class Picker(tk.Canvas):
         w, h = self.winfo_width(), self.winfo_height()
         if w < 4:
             return
-        rrect(self, 1, 1, w - 1, h - 1, px(18), fill=FIELD, outline=PINK if self.hover else LINE)
-        r = px(22)
-        cx, cy = px(20) + r, h / 2
-        self.create_oval(cx - r, cy - r, cx + r, cy + r, fill=PINK, outline="")
-        self.create_text(cx, cy - px(1), text="\u266A", fill=ON_PINK, font=(FONT_B, 17))
-        tx = cx + r + px(16)
+        self.create_rectangle(0, 0, w - 1, h - 1, fill=FIELD, outline=TEXT if self.hover else LINE, width=1)
+        self.create_text(px(14), px(15), text="SONG", fill=MUTED, font=(MONO, 8), anchor="w")
+        if self.sub:
+            self.create_text(w - px(14), px(15), text=self.sub, fill=MUTED, font=(MONO, 8), anchor="e")
         name = self.title
-        limit = max(10, int((w - tx - px(16)) / px(8)))
+        limit = max(8, int((w - px(28)) / px(9)))
         if len(name) > limit:
             name = name[:limit - 1] + "\u2026"
-        self.create_text(tx, h / 2 - px(10), text=name, fill=TEXT, font=(FONT_B, 12), anchor="w")
-        self.create_text(tx, h / 2 + px(12), text=self.sub, fill=MUTED, font=(FONT, 9), anchor="w")
+        self.create_text(px(14), h - px(26), text=name, fill=TEXT, font=(SANS, 13), anchor="w")
 
 
 class Link(tk.Label):
-    def __init__(self, parent, text, command, bg=BG, fg=MUTED):
-        super().__init__(parent, text=text, bg=bg, fg=fg, font=(FONT_B, 10), cursor="hand2")
-        self._fg = fg
-        self.bind("<Enter>", lambda e: self.config(fg=PINK))
-        self.bind("<Leave>", lambda e: self.config(fg=self._fg))
+    def __init__(self, parent, text, command, fg=None):
+        self._fg = fg or MUTED
+        super().__init__(parent, text=text, bg=BG, fg=self._fg, font=(MONO, 9), cursor="hand2")
+        self.bind("<Enter>", lambda e: self.config(fg=TEXT, font=(MONO, 9, "underline")))
+        self.bind("<Leave>", lambda e: self.config(fg=self._fg, font=(MONO, 9)))
         self.bind("<ButtonRelease-1>", lambda e: command())
+
+
+class Logo(tk.Canvas):
+    """The sakura mark, drawn in the current theme."""
+
+    def __init__(self, parent, size=46):
+        super().__init__(parent, width=px(size), height=px(size), bg=BG, highlightthickness=0, bd=0)
+        self.size = px(size)
+        self.bind("<Configure>", lambda e: self.redraw())
+        self.after(10, self.redraw)
+
+    def redraw(self):
+        self.delete("all")
+        s = self.size
+        cx = cy = s / 2.0
+        R = s * 0.43
+        color = CURRENT_FLOWERS == "color"
+        for i in range(5):
+            ang = (i - 2) * 2 * math.pi / 5
+            pts = petal_points("notch", cx, cy + R * 0.06, ang, R, R * 0.5)
+            if color:
+                self.create_polygon(pts, smooth=True, fill=ACCENT, outline="")
+            else:
+                self.create_polygon(pts, smooth=True, fill=BG, outline=TEXT, width=max(1, px(1)))
+        for i in range(5):
+            ang = (i - 2) * 2 * math.pi / 5
+            self.create_line(cx + math.sin(ang) * R * 0.06, cy + R * 0.06 - math.cos(ang) * R * 0.06,
+                             cx + math.sin(ang) * R * 0.42, cy + R * 0.06 - math.cos(ang) * R * 0.42,
+                             fill=TEXT, width=max(2, px(2)), capstyle="round")
 
 
 # ======================================================================
@@ -1323,6 +1342,10 @@ class App(tk.Tk):
         self.worker = None
         self.last_midi_dir = None
         self.running = False
+        self.body = None
+        self.stage = None
+        self._warned = False
+        self._done_ok = False
 
         self.audio_var = tk.StringVar()
         self.out_var = tk.StringVar(value=str(DEFAULT_OUT))
@@ -1336,10 +1359,16 @@ class App(tk.Tk):
         self.clean_var = tk.BooleanVar(value=True)
         self.align_var = tk.BooleanVar(value=True)
         self.stem_vars = {s: tk.BooleanVar(value=(s != "drums")) for s in ALL_STEMS}
+        self.status = tk.StringVar(value="Choose a song, then press Convert.")
+        self.theme_var = tk.StringVar(value=CURRENT_THEME)
+        self.flower_var = tk.StringVar(value="Colour" if CURRENT_FLOWERS == "color" else "Line")
+        self.theme_var.trace_add("write", lambda *a: self.after(10, self._theme_changed))
+        self.flower_var.trace_add("write", lambda *a: self.after(10, self._theme_changed))
+        self.audio_var.trace_add("write", lambda *a: self._song_changed())
+        self.adv_open = self.log_open = False
 
         self._set_icon()
         self._build()
-        self.audio_var.trace_add("write", lambda *a: self._song_changed())
         self.update_idletasks()
         self.minsize(self.winfo_reqwidth(), self.winfo_reqheight())
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1359,15 +1388,9 @@ class App(tk.Tk):
             self.iconphoto(True, self._icon)
         except Exception:  # noqa: BLE001
             pass
-        need = 46 * SCALE
-        size = next((s for s in (48, 72, 96) if s >= need), 96)
-        try:
-            self._logo = tk.PhotoImage(data=ICON_PNGS[size])
-        except Exception:  # noqa: BLE001
-            self._logo = None
 
     def _style_titlebar(self):
-        """Dark title bar that blends with the window (Windows 10/11)."""
+        """Title bar that matches the theme (Windows 10/11)."""
         try:
             import ctypes
             self.update_idletasks()
@@ -1381,142 +1404,206 @@ class App(tk.Tk):
                 v = ctypes.c_int(value)
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, code, ctypes.byref(v), ctypes.sizeof(v))
 
-            attr(20, 1)                       # dark mode
+            dark = sum(_rgb(BG)) < 384
+            attr(20, 1 if dark else 0)        # dark / light title bar
             attr(35, colorref(BG))            # caption colour (Windows 11)
             attr(36, colorref(TEXT))          # caption text colour
         except Exception:  # noqa: BLE001
             pass
 
+    # ------------------------------------------------------------ themes
+    def _theme_changed(self):
+        theme = self.theme_var.get()
+        flowers = "color" if self.flower_var.get() == "Colour" else "line"
+        if theme != CURRENT_THEME:                 # picking a theme resets to its own flower style
+            flowers = THEMES[theme]["flower"]
+            self.flower_var.set("Colour" if flowers == "color" else "Line")
+        if theme == CURRENT_THEME and flowers == CURRENT_FLOWERS:
+            return
+        apply_theme(theme, flowers)
+        save_settings(CURRENT_THEME, CURRENT_FLOWERS)
+        self._rebuild()
+
+    def _rebuild(self):
+        old = self.stage
+        log_text = self.log.get("1.0", "end-1c")
+        adv, log, open_shown = self.adv_open, self.log_open, self._done_ok and self.open_link.winfo_ismapped()
+        self.body.destroy()
+        self.configure(bg=BG)
+        self.adv_open = self.log_open = False
+        self._build()
+        if old is not None:
+            self.stage.adopt(old)
+        self.log.config(state="normal")
+        self.log.insert("end", log_text)
+        self.log.config(state="disabled")
+        if adv:
+            self._toggle_adv()
+        if log:
+            self._toggle_log(show=True)
+        if open_shown:
+            self.open_link.pack(anchor="w", pady=(px(8), 0), after=self.prog)
+        self.start_btn.set_enabled(not self.running)
+        self.start_btn.set_text("Converting..." if self.running else "Convert")
+        self.cancel_btn.set_enabled(self.running)
+        self._song_changed()
+        self.prog.set(self.stage.disp if self.stage.mode in ("running", "done") else 0.0)
+        self._style_titlebar()
+        self.stage.dirty = True
+
     # ------------------------------------------------------------ layout
-    def _section(self, parent, text):
-        tk.Label(parent, text=text.upper(), font=(FONT_B, 8), fg=MUTED, bg=BG).pack(
-            anchor="w", pady=(px(18), px(6)))
+    def _section(self, parent, num, title, first=False):
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=(0 if first else px(20), px(8)))
+        tk.Label(row, text=num, font=(MONO, 9, "bold"), fg=TEXT, bg=BG).pack(side="left")
+        tk.Label(row, text="  " + title, font=(MONO, 9), fg=MUTED, bg=BG).pack(side="left")
+        tk.Frame(row, height=1, bg=LINE).pack(side="left", fill="x", expand=True, padx=(px(10), 0))
 
     def _build(self):
         body = tk.Frame(self, bg=BG)
-        body.pack(fill="both", expand=True, padx=px(22), pady=px(20))
+        body.pack(fill="both", expand=True, padx=px(26), pady=px(24))
+        self.body = body
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
 
         left = tk.Frame(body, bg=BG)
         left.grid(row=0, column=0, sticky="ns")
-        tk.Frame(left, width=px(430), height=1, bg=BG).pack()
+        tk.Frame(left, width=px(420), height=1, bg=BG).pack()
 
         # header
         hdr = tk.Frame(left, bg=BG)
         hdr.pack(fill="x")
-        if self._logo is not None:
-            tk.Label(hdr, image=self._logo, bg=BG).pack(side="left")
+        Logo(hdr).pack(side="left")
         txt = tk.Frame(hdr, bg=BG)
-        txt.pack(side="left", padx=px(12))
-        tk.Label(txt, text=APP_NAME, font=(FONT_B, 22), fg=TEXT, bg=BG).pack(anchor="w")
-        tk.Label(txt, text="Song in, MIDI out.", font=(FONT, 10), fg=MUTED, bg=BG).pack(anchor="w")
+        txt.pack(side="left", padx=px(14))
+        tk.Label(txt, text=APP_NAME, font=(LIGHT, 24), fg=TEXT, bg=BG).pack(anchor="w")
+        tk.Label(txt, text="AUDIO TO MIDI", font=(MONO, 8), fg=MUTED, bg=BG).pack(anchor="w")
 
-        # song
+        # 01 song
+        self._section(left, "01", "SONG")
         self.picker = Picker(left, self._pick_audio)
-        self.picker.pack(fill="x", pady=(px(20), 0))
+        self.picker.pack(fill="x")
 
-        # instruments
-        self._section(left, "Instruments")
+        # 02 instruments
+        self._section(left, "02", "INSTRUMENTS")
         grid = tk.Frame(left, bg=BG)
         grid.pack(fill="x")
         for c in range(3):
             grid.columnconfigure(c, weight=1, uniform="stem")
         for i, name in enumerate(ALL_STEMS):
-            Chip(grid, name.capitalize(), self.stem_vars[name]).grid(
+            Chip(grid, name, self.stem_vars[name]).grid(
                 row=i // 3, column=i % 3, sticky="ew",
-                padx=(0 if i % 3 == 0 else px(8), 0), pady=(0 if i < 3 else px(8), 0))
-        tk.Label(left, text="Violin, synths and everything else land in Other.",
-                 font=(FONT, 9), fg=MUTED, bg=BG).pack(anchor="w", pady=(px(8), 0))
+                padx=(0 if i % 3 == 0 else px(6), 0), pady=(0 if i < 3 else px(6), 0))
+        tk.Label(left, text="Violin, synths and everything else are in Other.",
+                 font=(SANS, 9), fg=MUTED, bg=BG).pack(anchor="w", pady=(px(8), 0))
 
-        # snap to beat
-        self._section(left, "Snap notes to the beat")
+        # 03 timing
+        self._section(left, "03", "SNAP TO BEAT")
         seg = tk.Frame(left, bg=BG)
         seg.pack(fill="x")
         for c, key in enumerate(QUANT_CHOICES):
             seg.columnconfigure(c, weight=1, uniform="q")
             Chip(seg, key, self.quant_var, value=key).grid(
-                row=0, column=c, sticky="ew", padx=(0 if c == 0 else px(8), 0))
+                row=0, column=c, sticky="ew", padx=(0 if c == 0 else px(6), 0))
 
-        # actions
+        # run
         row = tk.Frame(left, bg=BG)
-        row.pack(fill="x", pady=(px(22), 0))
+        row.pack(fill="x", pady=(px(24), 0))
         self.start_btn = Btn(row, "Convert", self._start, kind="primary", height=50)
         self.start_btn.pack(side="left", fill="x", expand=True)
         self.cancel_btn = Btn(row, "Cancel", self._cancel, kind="ghost", height=50, width=96)
-        self.cancel_btn.pack(side="left", padx=(px(10), 0))
+        self.cancel_btn.pack(side="left", padx=(px(8), 0))
         self.cancel_btn.set_enabled(False)
 
-        self.status = tk.StringVar(value="Choose a song, then press Convert.")
-        self.status_lbl = tk.Label(left, textvariable=self.status, fg=MUTED, bg=BG, font=(FONT, 10),
-                                   anchor="w", justify="left", wraplength=px(430))
-        self.status_lbl.pack(fill="x", pady=(px(14), px(6)))
+        self.status_lbl = tk.Label(left, textvariable=self.status, fg=WARN if self._warned else MUTED, bg=BG,
+                                   font=(SANS, 10), anchor="w", justify="left", wraplength=px(420))
+        self.status_lbl.pack(fill="x", pady=(px(14), px(8)))
         self.prog = Prog(left)
         self.prog.pack(fill="x")
-        self.open_link = Link(left, "Open MIDI folder  \u2192", self._open_folder, fg=PINK)
+        self.open_link = Link(left, "OPEN MIDI FOLDER  >", self._open_folder, fg=TEXT)
 
-        # advanced
-        self.adv_link = Link(left, "\u25B8  Advanced settings", self._toggle_adv)
-        self.adv_link.pack(anchor="w", pady=(px(14), 0))
+        # settings + log
+        links = tk.Frame(left, bg=BG)
+        links.pack(fill="x", pady=(px(20), 0))
+        self.adv_link = Link(links, "+ SETTINGS", self._toggle_adv)
+        self.adv_link.pack(side="left")
+        self.log_link = Link(links, "+ LOG", self._toggle_log)
+        self.log_link.pack(side="left", padx=(px(20), 0))
         self.adv = tk.Frame(left, bg=BG)
-        self._build_advanced(self.adv)
-
-        # details / log
-        self.log_link = Link(left, "\u25B8  Details", self._toggle_log)
-        self.log_link.pack(anchor="w", pady=(px(8), 0))
+        self._build_settings(self.adv)
         self.log_frame = tk.Frame(left, bg=BG)
         self.log = tk.Text(self.log_frame, height=9, wrap="word", state="disabled", bg=FIELD, fg=TEXT,
                            relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
-                           font=("Consolas", 9), padx=px(8), pady=px(6))
-        self.log.pack(side="left", fill="both", expand=True)
-        self.adv_open = self.log_open = False
+                           font=(MONO, 9), padx=px(8), pady=px(6), insertbackground=TEXT)
+        self.log.pack(fill="both", expand=True)
 
         # flower stage
-        stage_cv = tk.Canvas(body, width=px(380), height=px(580), bg=BG, highlightthickness=0, bd=0)
-        stage_cv.grid(row=0, column=1, sticky="nsew", padx=(px(22), 0))
-        self.stage = Stage(stage_cv)
-        stage_cv.bind("<Configure>", lambda e: setattr(self.stage, "dirty", True))
+        cv = tk.Canvas(body, width=px(380), height=px(600), bg=BG, highlightthickness=0, bd=0)
+        cv.grid(row=0, column=1, sticky="nsew", padx=(px(26), 0))
+        self.stage = Stage(cv)
+        cv.bind("<Configure>", lambda e: setattr(self.stage, "dirty", True))
 
     def _entry(self, parent, var, width=None):
-        e = tk.Entry(parent, textvariable=var, bg=FIELD, fg=TEXT, insertbackground=PINK, relief="flat",
-                     bd=0, highlightthickness=1, highlightbackground=LINE, highlightcolor=PINK,
-                     font=(FONT, 10), disabledbackground=FIELD, selectbackground=PINK,
-                     selectforeground=ON_PINK)
+        e = tk.Entry(parent, textvariable=var, bg=FIELD, fg=TEXT, insertbackground=TEXT, relief="flat",
+                     bd=0, highlightthickness=1, highlightbackground=LINE, highlightcolor=TEXT,
+                     font=(MONO, 10), selectbackground=ACCENT, selectforeground=ON_ACCENT)
         if width:
             e.config(width=width)
         return e
 
-    def _build_advanced(self, a):
-        def small(text):
-            tk.Label(a, text=text, font=(FONT, 9), fg=MUTED, bg=BG).pack(anchor="w", pady=(px(12), px(3)))
+    def _build_settings(self, a):
+        def head(text, first=False):
+            r = tk.Frame(a, bg=BG)
+            r.pack(fill="x", pady=(px(14) if first else px(18), px(6)))
+            tk.Label(r, text=text, font=(MONO, 8, "bold"), fg=TEXT, bg=BG).pack(side="left")
+            tk.Frame(r, height=1, bg=LINE).pack(side="left", fill="x", expand=True, padx=(px(10), 0))
 
-        small("Output folder")
+        def small(text):
+            tk.Label(a, text=text, font=(SANS, 9), fg=MUTED, bg=BG).pack(anchor="w", pady=(px(10), px(3)))
+
+        head("APPEARANCE", first=True)
+        small("Theme")
+        tg = tk.Frame(a, bg=BG)
+        tg.pack(fill="x")
+        for i, name in enumerate(THEME_ORDER):
+            tg.columnconfigure(i % 3, weight=1, uniform="th")
+            Chip(tg, name, self.theme_var, value=name, height=32).grid(
+                row=i // 3, column=i % 3, sticky="ew",
+                padx=(0 if i % 3 == 0 else px(6), 0), pady=(0 if i < 3 else px(6), 0))
+        small("Flower style")
+        fg = tk.Frame(a, bg=BG)
+        fg.pack(fill="x")
+        for i, name in enumerate(("Line", "Colour")):
+            fg.columnconfigure(i, weight=1, uniform="fl")
+            Chip(fg, name, self.flower_var, value=name, height=32).grid(
+                row=0, column=i, sticky="ew", padx=(0 if i == 0 else px(6), 0))
+
+        head("OUTPUT")
         of = tk.Frame(a, bg=BG)
         of.pack(fill="x")
         self._entry(of, self.out_var).pack(side="left", fill="x", expand=True, ipady=px(6))
-        Btn(of, "Browse", self._pick_out, kind="ghost", height=34, width=84).pack(side="left", padx=(px(8), 0))
+        Btn(of, "Browse", self._pick_out, kind="ghost", height=34, width=84).pack(side="left", padx=(px(6), 0))
 
+        head("PROCESSING")
         small("Separation model")
         seg = tk.Frame(a, bg=BG)
         seg.pack(fill="x")
         for c, key in enumerate(MODELS):
             seg.columnconfigure(c, weight=1, uniform="m")
-            Chip(seg, key, self.model_var, value=key, height=34).grid(
-                row=0, column=c, sticky="ew", padx=(0 if c == 0 else px(8), 0))
+            Chip(seg, key, self.model_var, value=key, height=32).grid(
+                row=0, column=c, sticky="ew", padx=(0 if c == 0 else px(6), 0))
         tk.Label(a, text="6 stems adds guitar and piano. 4 stems is lighter and faster.",
-                 font=(FONT, 9), fg=MUTED, bg=BG).pack(anchor="w", pady=(px(4), 0))
-
-        small("Note sensitivity  (higher = fewer notes)")
+                 font=(SANS, 9), fg=MUTED, bg=BG).pack(anchor="w", pady=(px(4), 0))
+        small("Note sensitivity (higher = fewer notes)")
         Slider(a, self.onset_var, 0.1, 0.9, 0.05, fmt=lambda v: "%.2f" % v).pack(fill="x")
-        small("Note length cutoff  (higher = shorter notes)")
+        small("Note length cutoff (higher = shorter notes)")
         Slider(a, self.frame_var, 0.1, 0.9, 0.05, fmt=lambda v: "%.2f" % v).pack(fill="x")
         small("Shortest note")
         Slider(a, self.minlen_var, 20, 400, 10, fmt=lambda v: "%d ms" % v).pack(fill="x")
-
-        small("Tempo (BPM) - leave blank to detect automatically")
+        small("Tempo in BPM (blank = detect automatically)")
         self._entry(a, self.bpm_var, width=10).pack(anchor="w", ipady=px(5))
 
-        tk.Frame(a, height=px(10), bg=BG).pack()
+        head("OPTIONS")
         Switch(a, "Single-note tracking for vocals and bass", self.mono_var).pack(fill="x")
         Switch(a, "Clean up notes (merge fragments, remove glitches)", self.clean_var).pack(fill="x")
         Switch(a, "Line up with the DAW grid (may delay MIDI by under a beat)", self.align_var).pack(fill="x")
@@ -1524,23 +1611,24 @@ class App(tk.Tk):
     def _toggle_adv(self):
         self.adv_open = not self.adv_open
         if self.adv_open:
-            self.adv.pack(fill="x", after=self.adv_link)
+            self.adv.pack(fill="x", after=self.adv_link.master)
         else:
             self.adv.pack_forget()
-        self.adv_link.config(text=("\u25BE" if self.adv_open else "\u25B8") + "  Advanced settings")
+        self.adv_link.config(text=("- " if self.adv_open else "+ ") + "SETTINGS")
         self.geometry("")
 
     def _toggle_log(self, show=None):
         self.log_open = (not self.log_open) if show is None else show
         if self.log_open:
-            self.log_frame.pack(fill="both", expand=True, after=self.log_link, pady=(px(6), 0))
+            self.log_frame.pack(fill="both", expand=True, pady=(px(10), 0))
         else:
             self.log_frame.pack_forget()
-        self.log_link.config(text=("\u25BE" if self.log_open else "\u25B8") + "  Details")
+        self.log_link.config(text=("- " if self.log_open else "+ ") + "LOG")
         self.geometry("")
 
     # ------------------------------------------------------------ helpers
     def _say(self, text, warn=False):
+        self._warned = warn
         self.status.set(text)
         self.status_lbl.config(fg=WARN if warn else MUTED)
 
@@ -1548,13 +1636,14 @@ class App(tk.Tk):
         self._say(text, warn=True)
 
     def _song_changed(self):
+        if self.body is None:
+            return
         p = self.audio_var.get().strip().strip('"')
         if p:
             path = Path(p)
-            folder = path.parent.name or str(path.parent)
-            self.picker.set(path.name, "in " + folder + "  \u00B7  click to change")
+            self.picker.set(path.name, path.parent.name or str(path.parent))
         else:
-            self.picker.set("Choose a song", "mp3, wav, flac, m4a")
+            self.picker.set("Choose a song", "")
 
     def _missing_libs(self):
         importlib.invalidate_caches()
@@ -1565,7 +1654,7 @@ class App(tk.Tk):
         if missing:
             self.start_btn.set_enabled(False)
             self._warn("Setup needed (" + ", ".join(missing) + "). Close this window, run setup.bat, "
-                       "then open Hanamidi again.")
+                       "then open " + APP_NAME + " again.")
 
     # ------------------------------------------------------------ actions
     def _pick_audio(self):
@@ -1577,12 +1666,10 @@ class App(tk.Tk):
         if p:
             self.audio_var.set(p)
             if self.stage.mode != "idle":
-                self.stage.mode = "idle"
-                self.stage.disp = self.stage.target = 0.0
-                self.stage.parts, self.stage.burst = [], None
-                self.stage.dirty = True
+                self.stage.reset()
                 self.prog.set(0)
                 self.open_link.pack_forget()
+                self._done_ok = False
             self._say("Ready. Press Convert.")
 
     def _pick_out(self):
@@ -1649,6 +1736,7 @@ class App(tk.Tk):
         )
         self.cancel_flag.clear()
         self.running = True
+        self._done_ok = False
         self.start_btn.set_text("Converting...")
         self.start_btn.set_enabled(False)
         self.cancel_btn.set_enabled(True)
@@ -1704,6 +1792,7 @@ class App(tk.Tk):
                     if ok:
                         self._say(text)
                         self.stage.finish()
+                        self._done_ok = True
                         self.open_link.pack(anchor="w", pady=(px(8), 0), after=self.prog)
                     else:
                         self._say(text, warn="Cancel" not in text)
@@ -1876,6 +1965,8 @@ def main():
     if "--make-icon" in sys.argv:        # used by setup.bat for the desktop shortcut
         write_icon()
         return
+    theme, flowers = load_settings()
+    apply_theme(theme, flowers)
     try:                                  # crisp rendering + own taskbar identity (Windows)
         import ctypes
         try:
